@@ -1,0 +1,35 @@
+services:
+  collabora:
+    environment:
+      extra_params: >
+        --o:ssl.enable=${COLLABORA_SSL_ENABLE:-true}
+        --o:ssl.ssl_verification=${COLLABORA_SSL_VERIFICATION:-true}
+        --o:ssl.termination=true
+        --o:welcome.enable=false
+        --o:net.frame_ancestors=${OC_DOMAIN:-cloud.opencloud.test}${TRAEFIK_PORT_HTTPS:+:}${TRAEFIK_PORT_HTTPS:-}
+        --o:net.lok_allow.host[14]=${OC_DOMAIN:-cloud.opencloud.test}${TRAEFIK_PORT_HTTPS:+:}${TRAEFIK_PORT_HTTPS:-}
+        --o:home_mode.enable=${COLLABORA_HOME_MODE:-false}
+        --o:hexify_embedded_urls=true
+    networks:
+      pangolin:
+      opencloud-net:
+
+  opencloud:
+    networks:
+      pangolin:
+      opencloud-net:
+
+  collaboration:
+    networks:
+      pangolin:
+      opencloud-net:
+
+  keycloak:
+    networks:
+      pangolin:
+      opencloud-net:
+
+networks:
+  pangolin:
+    name: pangolin
+    external: true
