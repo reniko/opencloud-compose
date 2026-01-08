@@ -31,7 +31,8 @@ services:
 
   postgres:
     volumes:
-      - ${KC_CUSTOM_DB_PATH:-keycloak_postgres_data}:/var/lib/postgresql/data
+      #- ${KC_CUSTOM_DB_PATH:-keycloak_postgres_data}:/var/lib/postgresql/data
+      - ${KC_CUSTOM_DB_PATH}:/var/lib/postgresql/data
 
 networks:
   pangolin:
