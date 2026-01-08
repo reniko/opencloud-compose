@@ -31,7 +31,6 @@ services:
 
   postgres:
     volumes:
-      KC_DB_PASSWORD
       - ${KC_CUSTOM_DB_PATH:-keycloak_postgres_data}:/var/lib/postgresql/data
 
 networks:
