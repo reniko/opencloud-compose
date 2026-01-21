@@ -13,37 +13,32 @@ services:
     networks:
       pangolin:
       opencloud-net:
-    extra_hosts:
-      - "cloud.andree-web.de:172.17.0.1"
 
   opencloud:
     networks:
-      pangolin:
+      pangolin2:
       opencloud-net:
     extra_hosts:
-      - "cloud.andree-web.de:172.17.0.1"
+      - "cloud.andree-web.de:172.23.255.100"
 
   collaboration:
     networks:
       pangolin:
       opencloud-net:
-    extra_hosts:
-      - "cloud.andree-web.de:172.17.0.1"
 
   keycloak:
     networks:
       pangolin:
       opencloud-net:
-    extra_hosts:
-      - "cloud.andree-web.de:172.17.0.1"
 
   postgres:
     volumes:
       - ${KC_CUSTOM_DB_PATH:-keycloak_postgres_data}:/var/lib/postgresql/data
-    extra_hosts:
-      - "cloud.andree-web.de:172.17.0.1"
       
 networks:
   pangolin:
     name: pangolin
+    external: true
+  pangolin2:
+    name: pangolin2
     external: true
