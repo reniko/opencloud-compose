@@ -16,6 +16,7 @@ services:
 
   opencloud:
     networks:
+      pangolin:
       pangolin2:
       opencloud-net:
     extra_hosts:
