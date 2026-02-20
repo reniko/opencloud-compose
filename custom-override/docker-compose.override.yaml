@@ -19,7 +19,6 @@ services:
     #  OC_DISABLE_VERSIONING=true
     networks:
       pangolin:
-      pangolin2:
       opencloud-net:
     extra_hosts:
       - "cloud.andree-web.de:172.23.255.100"
@@ -41,7 +40,4 @@ services:
 networks:
   pangolin:
     name: pangolin
-    external: true
-  pangolin2:
-    name: pangolin2
     external: true
