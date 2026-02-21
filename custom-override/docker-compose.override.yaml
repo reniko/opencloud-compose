@@ -20,8 +20,8 @@ services:
     networks:
       pangolin:
       opencloud-net:
-    extra_hosts:
-      - "cloud.andree-web.de:172.23.255.100"
+    ports:
+      - 127.0.0.1:9200:9200 # local opencloud for webdav
 
   collaboration:
     networks:
