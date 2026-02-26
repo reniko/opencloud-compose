@@ -1,4 +1,4 @@
-name: Sync upstream and create PR
+name: Sync Upstream and Create PR
 
 on:
   schedule:
@@ -10,40 +10,53 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v3
-      with:
-        ref: main
-        fetch-depth: 0
+      # 1. Checkout deines Repos inkl. Historie
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: main
+          fetch-depth: 0
 
-    - name: Fetch upstream
-      run: |
-        git remote add upstream https://github.com/opencloud-eu/opencloud-compose.git
-        git fetch upstream
-        git checkout -B upstream-sync upstream/main
+      # 2. Upstream-Remote hinzufügen und fetchen
+      - name: Fetch upstream
+        run: |
+          git config --global user.name "GitHub Action"
+          git config --global user.email "action@github.com"
+          git remote add upstream https://github.com/opencloud-eu/opencloud-compose.git
+          git fetch upstream
 
-    - name: Generate changelog
-      id: changelog
-      run: |
-        # Liste der Commits, die im Fork fehlen
-        git log --pretty=format:'- %h %s (%an)' main..upstream-sync \
-          > /tmp/changelog.md
+      # 3. Neuen Branch für Upstream-Merge erstellen
+      - name: Create sync branch
+        run: |
+          git checkout -B update-from-upstream main
+          git merge --ff-only upstream/main || true
 
-    - name: Commit branch
-      run: |
-        git checkout -B update-from-upstream main
-        git merge --ff-only upstream-sync || true
-        git push origin update-from-upstream --force
+      # 4. Changelog generieren (Commits zwischen main und upstream)
+      - name: Generate changelog
+        id: changelog
+        run: |
+          git log --pretty=format:'- %h %s (%an)' main..update-from-upstream > changelog.md
 
-    - name: Create Pull Request
-      uses: peter-evans/create-pull-request@v5
-      with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        branch: update-from-upstream
-        title: 'Sync with upstream opencloud-compose'
-        body: |
-          Dieser Pull Request enthält Änderungen aus dem Upstream.\
-          ### Changelog\
-          $(cat /tmp/changelog.md)
-        assignees: <Ihr GitHub-Benutzername>
-        labels: upstream-update
+      # 5. Branch pushen
+      - name: Push branch
+        run: git push origin update-from-upstream --force
+
+      # 6. Pull-Request öffnen (nur wenn neue Commits)
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: update-from-upstream       # Quell-Branch des PRs
+          base: main                        # Ziel-Branch (muss verschieden sein!)
+          assignees: reniko
+          title: 'Sync mit upstream opencloud-compose'
+          body: |
+            Dieser Pull Request synchronisiert deinen Fork mit dem Upstream-Projekt.
+
+            **Changelog (neue Commits):**
+            ```markdown
+            ${{ steps.changelog.outputs.stdout }}
+            ```
+
+          labels: upstream-update
+          draft: false
