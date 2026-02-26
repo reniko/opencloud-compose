@@ -1,8 +1,8 @@
-name: Sync Upstream and Create PR
+name: Sync Upstream and Create PR (daily)
 
 on:
   schedule:
-    - cron: "0 4 * * *"
+    - cron: "15 3 * * *"
   workflow_dispatch: {}
 
 permissions:
@@ -36,7 +36,6 @@ jobs:
 
       - name: Merge upstream/main into sync branch (merge commit)
         run: |
-          # Merge-Commit erzwingen (auch wenn ff möglich wäre), damit PR sauber sichtbar ist
           git merge --no-ff --no-edit upstream/main
 
       - name: Stop if no changes vs main
@@ -46,17 +45,19 @@ jobs:
             exit 0
           fi
 
-      - name: Generate changelog (commits from upstream not in fork main)
-        id: changelog
+      - name: Generate PR body (intro + changelog)
         run: |
           MERGE_BASE="$(git merge-base origin/main upstream/main)"
-          {
-            echo "text<<'EOF'"
-            echo "### Upstream Changelog (seit $(git rev-parse --short "$MERGE_BASE"))"
-            echo
-            git log --no-merges --pretty=format:'- %h %s (%an)' "$MERGE_BASE"..upstream/main
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+
+          cat > .github/pr_body.md <<EOF
+          Dieser PR merged \`upstream/main\` in deinen Fork.
+
+          ### Upstream Changelog
+          _Commits in upstream/main since common base \`${MERGE_BASE}\`_
+
+          EOF
+
+          git log --no-merges --pretty=format:'- %h %s (%an)' "${MERGE_BASE}..upstream/main" >> .github/pr_body.md
 
       - name: Push branch
         run: |
@@ -68,8 +69,5 @@ jobs:
           branch: update-from-upstream
           base: main
           title: "Sync upstream opencloud-compose"
-          body: |
-            Dieser PR merged `upstream/main` in deinen Fork.
-
-            ${{ steps.changelog.outputs.text }}
+          body-path: .github/pr_body.md
           labels: upstream-update
