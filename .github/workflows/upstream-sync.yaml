@@ -2,6 +2,7 @@ name: Sync Upstream and Create PR (daily)
 
 on:
   schedule:
+    # täglich 04:15 Europe/Berlin (Cron ist UTC: Winter 03:15, Sommer 02:15)
     - cron: "15 3 * * *"
   workflow_dispatch: {}
 
@@ -15,7 +16,7 @@ jobs:
 
     steps:
       - name: Checkout main (full history)
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
@@ -30,44 +31,44 @@ jobs:
           git remote add upstream https://github.com/opencloud-eu/opencloud-compose.git
           git fetch --prune upstream
 
+      - name: Stop if fork already contains upstream commits
+        run: |
+          # Wenn upstream/main bereits komplett in origin/main enthalten ist -> nichts zu tun
+          if git merge-base --is-ancestor upstream/main origin/main; then
+            echo "origin/main already contains upstream/main -> nothing to PR."
+            exit 0
+          fi
+
+      - name: Prepare PR body (in /tmp, not in repo)
+        run: |
+          BASE="$(git merge-base origin/main upstream/main)"
+          {
+            echo "Dieser PR merged \`upstream/main\` in deinen Fork."
+            echo
+            echo "### Upstream Changelog"
+            echo "_Commits in upstream/main since common base \`${BASE}\`_"
+            echo
+            git log --no-merges --pretty=format:'- %h %s (%an)' "${BASE}..upstream/main"
+          } > /tmp/pr_body.md
+
       - name: Create/update sync branch from fork main
         run: |
           git checkout -B update-from-upstream origin/main
 
-      - name: Merge upstream/main into sync branch (merge commit)
+      - name: Merge upstream/main into sync branch
         run: |
+          # Merge-Commit erzwingen, damit der Commit-Graph wirklich upstream enthält
           git merge --no-ff --no-edit upstream/main
-
-      - name: Stop if no changes vs main
-        run: |
-          if git diff --quiet origin/main..HEAD; then
-            echo "No changes vs main -> nothing to PR."
-            exit 0
-          fi
-
-      - name: Generate PR body (intro + changelog)
-        run: |
-          MERGE_BASE="$(git merge-base origin/main upstream/main)"
-
-          cat > .github/pr_body.md <<EOF
-          Dieser PR merged \`upstream/main\` in deinen Fork.
-
-          ### Upstream Changelog
-          _Commits in upstream/main since common base \`${MERGE_BASE}\`_
-
-          EOF
-
-          git log --no-merges --pretty=format:'- %h %s (%an)' "${MERGE_BASE}..upstream/main" >> .github/pr_body.md
 
       - name: Push branch
         run: |
           git push origin update-from-upstream --force-with-lease
 
       - name: Create or update PR
-        uses: peter-evans/create-pull-request@v8
+        uses: peter-evans/create-pull-request@v6
         with:
           branch: update-from-upstream
           base: main
           title: "Sync upstream opencloud-compose"
-          body-path: .github/pr_body.md
+          body-path: /tmp/pr_body.md
           labels: upstream-update
