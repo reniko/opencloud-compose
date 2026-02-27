@@ -36,45 +36,45 @@ services:
       - ${KC_CUSTOM_DB_PATH:-keycloak_postgres_data}:/var/lib/postgresql/data
 
   opencloud-backup:
-    image: alpine:3.18
+    image: alpine:latest
     container_name: opencloud-backup
     networks:
       - opencloud-net
     depends_on:
-      - postgres       # Keycloak-DB
-      - ldap-server    # OpenLDAP
+      - postgres
+      - ldap-server
     volumes:
-      # Zielverzeichnis für die Exportdateien – hier als Host-Path /opt/data/opencloud_backups;
-      # passe das ggf. an deine Umgebung an (Kopia sichert /opt/data automatisch).
+      # Verzeichnis auf dem Host, das Kopia/rclone sichert
       - ${BACKUP_DIR:-/opt/data/opencloud_backups}:/opt/data/backups
     environment:
-      # Datenbank-Parameter aus deiner idm/ldap-keycloak.yml
       DB_HOST: postgres
       DB_NAME: keycloak
       DB_USER: ${KC_DB_USERNAME:-keycloak}
       DB_PASSWORD: ${KC_DB_PASSWORD:-keycloak}
-      # LDAP-Verbindungsdaten
       LDAP_HOST: ldap-server
       LDAP_PORT: "1636"
       LDAP_BIND_DN: "cn=admin,dc=opencloud,dc=eu"
       LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:-admin}
       LDAP_BASE_DN: "dc=opencloud,dc=eu"
-      # Push-URL für Uptime Kuma (hier ein Beispieltoken – in Uptime Kuma generieren)
       UPTIME_KUMA_PUSH_URL: ${UPTIME_KUMA_PUSH_URL:-https://uptime.example.org/api/push/your-token}
-      # Backup-Intervall in Sekunden (standard: stündlich)
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-3600}
-    entrypoint: /bin/sh
+    entrypoint:
+      - /bin/sh
+      - -c
+    # Das folgende Skript läuft als eine einzige Shell, deshalb wird 'set' korrekt interpretiert
     command: |
       set -eu
+      # benötigte Tools installieren (postgresql-client, openldap-clients, curl)
       apk add --no-cache postgresql-client openldap-clients curl
 
       while true; do
         TS=$(date +"%Y%m%d%H%M%S")
         BACKUP_FAILED=0
-        # Verzeichnisse anlegen
+
+        # Verzeichnisse für Backups anlegen
         mkdir -p /opt/data/backups/postgres /opt/data/backups/ldap
 
-        # Keycloak-DB dumpen (cold backup); Änderungen an der DB während des Dumps sind bei dir selten:contentReference[oaicite:0]{index=0}.
+        # Keycloak-Datenbank dumpen und komprimieren
         if ! PGPASSWORD="$DB_PASSWORD" \
           pg_dump -h "$DB_HOST" -U "$DB_USER" "$DB_NAME" \
           | gzip > "/opt/data/backups/postgres/keycloak-db-$TS.sql.gz"
@@ -82,7 +82,7 @@ services:
           BACKUP_FAILED=1
         fi
 
-        # LDAP per ldapsearch exportieren (inkonsistente Backups sind bei geringer Änderungsfrequenz tolerierbar:contentReference[oaicite:1]{index=1})
+        # LDAP via ldapsearch exportieren
         if ! ldapsearch -x -H "ldaps://$LDAP_HOST:$LDAP_PORT" \
           -D "$LDAP_BIND_DN" -w "$LDAP_BIND_PASSWORD" \
           -b "$LDAP_BASE_DN" -LLL "(objectClass=*)" \
@@ -91,14 +91,14 @@ services:
           BACKUP_FAILED=1
         fi
 
-        # Alte Dateien (>7 Tage) löschen
+        # alte Dateien nach 7 Tagen entfernen
         find /opt/data/backups/postgres -type f -mtime +7 -delete
         find /opt/data/backups/ldap     -type f -mtime +7 -delete
 
-        # Uptime‑Kuma ping senden:contentReference[oaicite:2]{index=2}; bei Fehler status=down mitgeben
+        # Uptime-Kuma benachrichtigen; bei Fehler status=down senden
         if [ -n "$UPTIME_KUMA_PUSH_URL" ]; then
           if [ "$BACKUP_FAILED" -eq 0 ]; then
-            curl -fsS --retry 3 "$UPTIME_KUMA_PUSH_URL?status=up" || true
+            curl -fsS --retry 3 "$UPTIME_KUMA_PUSH_URL" || true
           else
             curl -fsS --retry 3 "$UPTIME_KUMA_PUSH_URL?status=down" || true
           fi
