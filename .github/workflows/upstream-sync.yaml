@@ -37,7 +37,7 @@ jobs:
             exit 0
           fi
 
-      - name: Prepare PR body (in /tmp, not in repo)
+      - name: Prepare PR body (in /tmp)
         run: |
           BASE="$(git merge-base origin/main upstream/main)"
           {
@@ -49,16 +49,16 @@ jobs:
             git log --no-merges --pretty=format:'- %h %s (%an)' "${BASE}..upstream/main"
           } > /tmp/pr_body.md
 
-      - name: Create merge branch (NO tracking to origin/main)
+      - name: Create merge branch and merge upstream
         run: |
+          # von main aus neuen Branch erstellen
           git checkout -B update-from-upstream main
-          git branch --unset-upstream || true
-
-      - name: Merge upstream/main into merge branch
-        run: |
+          # KEIN upstream tracking setzen
           git merge --no-ff --no-edit upstream/main
 
-      # WICHTIG: KEIN git push hier!
+      - name: Switch back to main for PR action (important)
+        run: |
+          git checkout main
 
       - name: Create or update PR
         uses: peter-evans/create-pull-request@v6
