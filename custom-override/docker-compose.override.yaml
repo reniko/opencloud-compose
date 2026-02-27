@@ -35,30 +35,6 @@ services:
     volumes:
       - ${KC_CUSTOM_DB_PATH:-keycloak_postgres_data}:/var/lib/postgresql/data
 
-Perfekt – dann ist alles klar: LDAPS ok, DN ok, es fehlte nur das richtige Passwort in der Sidecar-Config.
-
-Jetzt bauen wir es “sauber”, damit:
-
-Passwort nicht im YAML steht
-
-Sidecar bei fehlendem Passwort hart fehlschlägt (und Kuma status=down bekommt)
-
-Uptime Kuma Push immer passiert (ok/down)
-
-1) .env (oder Komodo Secret) ergänzen
-
-In deinem OpenCloud-Compose .env (oder als Komodo Secret/env injection):
-
-LDAP_BIND_PASSWORD=<<<DEIN_KORREKTES_LDAP_ADMIN_PW>>>
-KC_DB_PASSWORD=<<<DEIN_KC_DB_PW>>>
-UPTIME_KUMA_PUSH_URL=https://<kuma-domain>/api/push/<token>
-BACKUP_DIR=/opt/data/opencloud_backups
-BACKUP_INTERVAL_SECONDS=3600
-
-Wichtig: Kein Default mehr für Passwörter. Dann merkst du sofort, wenn sie fehlen.
-
-2) Sidecar Service (final) – mit Pflicht-Checks + Kuma Push
-services:
   opencloud-backup:
     image: alpine:latest
     container_name: opencloud-backup
