@@ -35,9 +35,8 @@ services:
     volumes:
       - ${KC_CUSTOM_DB_PATH:-keycloak_postgres_data}:/var/lib/postgresql/data
 
-  opencloud-backup:
+  backup:
     image: alpine:latest
-    container_name: opencloud-backup
     restart: unless-stopped
     networks:
       - opencloud-net
