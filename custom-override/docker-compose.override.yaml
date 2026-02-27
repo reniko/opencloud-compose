@@ -35,6 +35,30 @@ services:
     volumes:
       - ${KC_CUSTOM_DB_PATH:-keycloak_postgres_data}:/var/lib/postgresql/data
 
+Perfekt – dann ist alles klar: LDAPS ok, DN ok, es fehlte nur das richtige Passwort in der Sidecar-Config.
+
+Jetzt bauen wir es “sauber”, damit:
+
+Passwort nicht im YAML steht
+
+Sidecar bei fehlendem Passwort hart fehlschlägt (und Kuma status=down bekommt)
+
+Uptime Kuma Push immer passiert (ok/down)
+
+1) .env (oder Komodo Secret) ergänzen
+
+In deinem OpenCloud-Compose .env (oder als Komodo Secret/env injection):
+
+LDAP_BIND_PASSWORD=<<<DEIN_KORREKTES_LDAP_ADMIN_PW>>>
+KC_DB_PASSWORD=<<<DEIN_KC_DB_PW>>>
+UPTIME_KUMA_PUSH_URL=https://<kuma-domain>/api/push/<token>
+BACKUP_DIR=/opt/data/opencloud_backups
+BACKUP_INTERVAL_SECONDS=3600
+
+Wichtig: Kein Default mehr für Passwörter. Dann merkst du sofort, wenn sie fehlen.
+
+2) Sidecar Service (final) – mit Pflicht-Checks + Kuma Push
+services:
   opencloud-backup:
     image: alpine:latest
     container_name: opencloud-backup
@@ -51,57 +75,74 @@ services:
       DB_HOST: postgres
       DB_NAME: keycloak
       DB_USER: ${KC_DB_USERNAME:-keycloak}
-      DB_PASSWORD: ${KC_DB_PASSWORD:-keycloak}
+      DB_PASSWORD: ${KC_DB_PASSWORD}
 
       LDAP_HOST: ldap-server
       LDAP_PORT: "1636"
       LDAP_BIND_DN: "cn=admin,dc=opencloud,dc=eu"
-      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:-admin}
+      LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD}
       LDAP_BASE_DN: "dc=opencloud,dc=eu"
 
-      UPTIME_KUMA_PUSH_URL: ${UPTIME_KUMA_PUSH_URL:-https://uptime.example.org/api/push/your-token}
+      UPTIME_KUMA_PUSH_URL: ${UPTIME_KUMA_PUSH_URL}
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-3600}
 
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -eu
-        apk add --no-cache postgresql-client openldap-clients curl
+
+        # Pflicht-Variablen prüfen (sonst sofort "down")
+        require() { [ -n "$$1" ] || return 1; }
+        BACKUP_FAILED=0
+
+        if ! require "$$DB_PASSWORD" || ! require "$$LDAP_BIND_PASSWORD" || ! require "$$UPTIME_KUMA_PUSH_URL"; then
+          BACKUP_FAILED=1
+        fi
+
+        # Tools installieren
+        apk add --no-cache postgresql-client openldap-clients curl >/dev/null
+
+        # LDAPS self-signed: Zertifikatsprüfung aus (internes Docker-Netz)
+        export LDAPTLS_REQCERT=never
 
         while true; do
           TS=$$(date +"%Y%m%d%H%M%S")
           BACKUP_FAILED=0
 
-          mkdir -p /opt/data/backups/postgres /opt/data/backups/ldap
-
-          # Postgres dump
-          if ! PGPASSWORD="$$DB_PASSWORD" \
-            pg_dump -h "$$DB_HOST" -U "$$DB_USER" "$$DB_NAME" \
-            | gzip > "/opt/data/backups/postgres/keycloak-db-$$TS.sql.gz"
-          then
+          # Passwort/URL erneut prüfen pro Loop (falls env später gefixt wird)
+          if ! require "$$DB_PASSWORD" || ! require "$$LDAP_BIND_PASSWORD" || ! require "$$UPTIME_KUMA_PUSH_URL"; then
             BACKUP_FAILED=1
-          fi
+          else
+            mkdir -p /opt/data/backups/postgres /opt/data/backups/ldap
 
-          # LDAP export
-          if ! ldapsearch -x -H "ldaps://$$LDAP_HOST:$$LDAP_PORT" \
-            -D "$$LDAP_BIND_DN" -w "$$LDAP_BIND_PASSWORD" \
-            -b "$$LDAP_BASE_DN" -LLL "(objectClass=*)" \
-            > "/opt/data/backups/ldap/ldap-$$TS.ldif"
-          then
-            BACKUP_FAILED=1
-          fi
-
-          # retention 7 Tage
-          find /opt/data/backups/postgres -type f -mtime +7 -delete || true
-          find /opt/data/backups/ldap     -type f -mtime +7 -delete || true
-
-          # Uptime Kuma push
-          if [ -n "$$UPTIME_KUMA_PUSH_URL" ]; then
-            if [ "$$BACKUP_FAILED" -eq 0 ]; then
-              curl -fsS --retry 3 "$$UPTIME_KUMA_PUSH_URL" || true
-            else
-              curl -fsS --retry 3 "$$UPTIME_KUMA_PUSH_URL?status=down" || true
+            # Postgres dump
+            if ! PGPASSWORD="$$DB_PASSWORD" \
+              pg_dump -h "$$DB_HOST" -U "$$DB_USER" "$$DB_NAME" \
+              | gzip > "/opt/data/backups/postgres/keycloak-db-$$TS.sql.gz"
+            then
+              BACKUP_FAILED=1
             fi
+
+            # LDAP export
+            if ! ldapsearch -x \
+              -H "ldaps://$$LDAP_HOST:$$LDAP_PORT" \
+              -D "$$LDAP_BIND_DN" -w "$$LDAP_BIND_PASSWORD" \
+              -b "$$LDAP_BASE_DN" -LLL "(objectClass=*)" \
+              > "/opt/data/backups/ldap/ldap-$$TS.ldif"
+            then
+              BACKUP_FAILED=1
+            fi
+
+            # Retention 7 Tage
+            find /opt/data/backups/postgres -type f -mtime +7 -delete || true
+            find /opt/data/backups/ldap     -type f -mtime +7 -delete || true
+          fi
+
+          # Uptime Kuma push: ok oder down
+          if [ "$$BACKUP_FAILED" -eq 0 ]; then
+            curl -fsS --retry 3 "$$UPTIME_KUMA_PUSH_URL" >/dev/null || true
+          else
+            curl -fsS --retry 3 "$$UPTIME_KUMA_PUSH_URL?status=down" >/dev/null || true
           fi
 
           sleep "$$BACKUP_INTERVAL_SECONDS"
