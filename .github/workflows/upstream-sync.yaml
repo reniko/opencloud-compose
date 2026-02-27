@@ -2,8 +2,7 @@ name: Sync Upstream and Create PR (daily)
 
 on:
   schedule:
-    # täglich 04:15 Europe/Berlin (Cron ist UTC: Winter 03:15, Sommer 02:15)
-    - cron: "15 3 * * *"
+    - cron: "15 3 * * *" # täglich (UTC)
   workflow_dispatch: {}
 
 permissions:
@@ -13,6 +12,7 @@ permissions:
 jobs:
   sync:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout main (full history)
         uses: actions/checkout@v4
@@ -41,7 +41,7 @@ jobs:
         run: |
           BASE="$(git merge-base origin/main upstream/main)"
           {
-            echo "Dieser PR merged \`upstream/main\` in deinen Fork."
+            echo "Dieser PR übernimmt Änderungen aus \`upstream/main\` in deinen Fork."
             echo
             echo "### Upstream Changelog"
             echo "_Commits in upstream/main since common base \`${BASE}\`_"
@@ -49,16 +49,18 @@ jobs:
             git log --no-merges --pretty=format:'- %h %s (%an)' "${BASE}..upstream/main"
           } > /tmp/pr_body.md
 
-      - name: Create merge branch and merge upstream
+      - name: Apply upstream changes as squash merge
         run: |
-          # von main aus neuen Branch erstellen
-          git checkout -B update-from-upstream main
-          # KEIN upstream tracking setzen
-          git merge --no-ff --no-edit upstream/main
+          # Squash bringt die Datei-Änderungen rein, ohne Merge-Commit/History-Komplexität
+          git merge --squash upstream/main
 
-      - name: Switch back to main for PR action (important)
-        run: |
-          git checkout main
+          # Falls doch keine Änderungen im Tree (edge case), abbrechen
+          if git diff --quiet; then
+            echo "No file changes after squash (edge case) -> nothing to PR."
+            exit 0
+          fi
+
+          git commit -m "chore: sync upstream opencloud-compose"
 
       - name: Create or update PR
         uses: peter-evans/create-pull-request@v6
