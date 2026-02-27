@@ -67,6 +67,7 @@ jobs:
         with:
           branch: update-from-upstream
           base: main
+          assignees: reniko
           title: "Sync upstream opencloud-compose"
           body-path: /tmp/pr_body.md
           labels: upstream-update
