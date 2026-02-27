@@ -41,6 +41,7 @@ services:
     restart: unless-stopped
     networks:
       - opencloud-net
+      - monitoring
     depends_on:
       - postgres
       - ldap-server
@@ -109,4 +110,7 @@ services:
 networks:
   pangolin:
     name: pangolin
+    external: true
+  monitoring:
+    name: monitoring
     external: true
