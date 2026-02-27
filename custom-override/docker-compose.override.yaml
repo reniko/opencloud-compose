@@ -15,8 +15,6 @@ services:
       opencloud-net:
 
   opencloud:
-    #environment:
-    #  OC_DISABLE_VERSIONING=true
     networks:
       pangolin:
       opencloud-net:
