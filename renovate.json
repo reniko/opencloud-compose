@@ -1,9 +1,20 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json"
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
 
   "extends": [
-    "config:best-practices",
-    ":assignee(reniko)",
-    ":separateMajorReleases"
+    "config:base"
+  ],
+
+  "assignees": ["reniko"],
+
+  "enabledManagers": [
+    "github-actions"
+  ],
+
+  "packageRules": [
+    {
+      "matchManagers": ["github-actions"],
+      "automerge": false
+    }
   ]
 }
