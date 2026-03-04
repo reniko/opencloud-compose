@@ -51,12 +51,30 @@ jobs:
 
       - name: Apply upstream changes as squash merge
         run: |
-          # Squash bringt die Datei-Änderungen rein, ohne Merge-Commit/History-Komplexität
-          git merge --squash upstream/main
+          set -eu
 
-          # Falls doch keine Änderungen im Tree (edge case), abbrechen
+          # Squash bringt die Datei-Änderungen rein, ohne Merge-Commit/History-Komplexität
+          git merge --squash upstream/main || true
+
+          # renovate.json behalten (Fork-Version)
+          if git ls-files -u | awk '{print $4}' | grep -qx "renovate.json"; then
+            git checkout --ours renovate.json
+            git add renovate.json
+          fi
+
+          # Alle anderen Konflikte: Upstream gewinnt
+          if git ls-files -u | grep -q .; then
+            git checkout --theirs .
+            git add .
+          fi
+
+          # custom overrides wiederherstellen
+          git restore --source=HEAD custom-override || true
+          git add custom-override || true
+
+          # Falls keine Änderungen entstanden sind
           if git diff --quiet; then
-            echo "No file changes after squash (edge case) -> nothing to PR."
+            echo "No file changes after squash -> nothing to PR."
             exit 0
           fi
 
