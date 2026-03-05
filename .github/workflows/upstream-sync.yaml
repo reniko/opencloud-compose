@@ -116,7 +116,7 @@ jobs:
           git commit -m "chore: sync upstream opencloud-compose"
 
       - name: Create or update PR
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@v8
         with:
           branch: update-from-upstream
           base: main
