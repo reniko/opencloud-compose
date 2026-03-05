@@ -1,9 +1,10 @@
-name: Sync Upstream and Create PR (daily)
+name: Sync upstream opencloud-compose
 
 on:
   schedule:
-    - cron: "15 3 * * *" # täglich (UTC)
-  workflow_dispatch: {}
+    # täglich 03:00 UTC
+    - cron: "0 3 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -14,65 +15,99 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout main (full history)
-        uses: actions/checkout@v6
+      - name: Checkout fork
+        uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
 
-      - name: Configure git
+      - name: Setup git
         run: |
           git config user.name "GitHub Action"
           git config user.email "action@github.com"
 
-      - name: Add upstream and fetch
+      - name: Add upstream remote
         run: |
+          git remote remove upstream 2>/dev/null || true
           git remote add upstream https://github.com/opencloud-eu/opencloud-compose.git
           git fetch --prune upstream
 
-      - name: Stop if fork already contains upstream commits
-        run: |
-          if git merge-base --is-ancestor upstream/main origin/main; then
-            echo "origin/main already contains upstream/main -> nothing to PR."
-            exit 0
-          fi
-
-      - name: Prepare PR body (in /tmp)
-        run: |
-          BASE="$(git merge-base origin/main upstream/main)"
-          {
-            echo "Dieser PR übernimmt Änderungen aus \`upstream/main\` in deinen Fork."
-            echo
-            echo "### Upstream Changelog"
-            echo "_Commits in upstream/main since common base \`${BASE}\`_"
-            echo
-            git log --no-merges --pretty=format:'- %h %s (%an)' "${BASE}..upstream/main"
-          } > /tmp/pr_body.md
-
-      - name: Apply upstream changes as squash merge
+      - name: Determine upstream state
+        id: state
         run: |
           set -eu
 
-          # Squash bringt die Datei-Änderungen rein, ohne Merge-Commit/History-Komplexität
+          NEW_UPSTREAM="$(git rev-parse upstream/main)"
+          OLD_UPSTREAM="$(cat .github/upstream-main.sha 2>/dev/null || echo "")"
+
+          echo "new_upstream=$NEW_UPSTREAM" >> "$GITHUB_OUTPUT"
+          echo "old_upstream=$OLD_UPSTREAM" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$OLD_UPSTREAM" ] && [ "$OLD_UPSTREAM" = "$NEW_UPSTREAM" ]; then
+            echo "Upstream unchanged ($NEW_UPSTREAM) -> nothing to PR."
+            exit 0
+          fi
+
+          echo "Upstream changed:"
+          echo "  old: ${OLD_UPSTREAM:-<none>}"
+          echo "  new: $NEW_UPSTREAM"
+
+      - name: Generate changelog (since last synced upstream SHA)
+        run: |
+          set -eu
+
+          OLD="${{ steps.state.outputs.old_upstream }}"
+          NEW="${{ steps.state.outputs.new_upstream }}"
+
+          {
+            echo "Dieser PR synced \`upstream/main\` in deinen Fork (squash)."
+            echo
+            echo "### Upstream Changelog"
+            if [ -n "$OLD" ]; then
+              echo "_Commits in upstream/main since last synced upstream SHA \`$OLD\`_"
+              echo
+              git log --no-merges --pretty=format:'- %h %s (%an)' "${OLD}..${NEW}"
+            else
+              echo "_Erster Lauf ohne State-Datei. Zeige die letzten 50 Commits von upstream/main:_"
+              echo
+              git log --no-merges -n 50 --pretty=format:'- %h %s (%an)' "${NEW}"
+            fi
+          } > /tmp/pr_body.md
+
+      - name: Create update branch from main
+        run: |
+          set -eu
+          git checkout -B update-from-upstream main
+
+      - name: Apply upstream changes as squash merge (upstream wins, keep fork renovate + overrides)
+        run: |
+          set -eu
+
+          # Squash upstream reinholen (bei Konflikten geht der Befehl non-zero, wir lösen dann)
           git merge --squash upstream/main || true
 
-          # renovate.json behalten (Fork-Version)
+          # renovate.json: immer Fork behalten (du willst nur Actions-Updates)
           if git ls-files -u | awk '{print $4}' | grep -qx "renovate.json"; then
             git checkout --ours renovate.json
             git add renovate.json
           fi
 
-          # Alle anderen Konflikte: Upstream gewinnt
+          # Alles andere: Upstream gewinnt
           if git ls-files -u | grep -q .; then
             git checkout --theirs .
             git add .
           fi
 
-          # custom overrides wiederherstellen
+          # custom-override immer behalten (Fork gewinnt)
           git restore --source=HEAD custom-override || true
           git add custom-override || true
 
-          # Falls keine Änderungen entstanden sind
+          # State-Datei aktualisieren (damit Changelog künftig nicht doppelt ist)
+          mkdir -p .github
+          echo "${{ steps.state.outputs.new_upstream }}" > .github/upstream-main.sha
+          git add .github/upstream-main.sha
+
+          # Wenn danach wirklich nichts geändert wurde: kein PR
           if git diff --quiet; then
             echo "No file changes after squash -> nothing to PR."
             exit 0
@@ -81,12 +116,12 @@ jobs:
           git commit -m "chore: sync upstream opencloud-compose"
 
       - name: Create or update PR
-        uses: peter-evans/create-pull-request@v8
+        uses: peter-evans/create-pull-request@v6
         with:
           branch: update-from-upstream
           base: main
-          assignees: reniko
-          title: "Sync upstream opencloud-compose"
+          title: Sync upstream opencloud-compose
           body-path: /tmp/pr_body.md
           labels: upstream-update
+          assignees: reniko
           delete-branch: false
