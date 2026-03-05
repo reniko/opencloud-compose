@@ -36,7 +36,6 @@ jobs:
         id: state
         run: |
           set -eu
-
           NEW_UPSTREAM="$(git rev-parse upstream/main)"
           OLD_UPSTREAM="$(cat .github/upstream-main.sha 2>/dev/null || echo "")"
 
@@ -44,13 +43,12 @@ jobs:
           echo "old_upstream=$OLD_UPSTREAM" >> "$GITHUB_OUTPUT"
 
           if [ -n "$OLD_UPSTREAM" ] && [ "$OLD_UPSTREAM" = "$NEW_UPSTREAM" ]; then
-            echo "Upstream unchanged ($NEW_UPSTREAM) -> nothing to PR."
-            exit 0
+            echo "updates=false" >> "$GITHUB_OUTPUT"
+            echo "Upstream unchanged -> skip."
+          else
+            echo "updates=true" >> "$GITHUB_OUTPUT"
+            echo "Upstream changed -> proceed."
           fi
-
-          echo "Upstream changed:"
-          echo "  old: ${OLD_UPSTREAM:-<none>}"
-          echo "  new: $NEW_UPSTREAM"
 
       - name: Generate changelog (since last synced upstream SHA)
         run: |
@@ -74,40 +72,37 @@ jobs:
             fi
           } > /tmp/pr_body.md
 
-      - name: Create update branch from main
-        run: |
-          set -eu
-          git checkout -B update-from-upstream main
-
-      - name: Apply upstream changes as squash merge (upstream wins, keep fork renovate + overrides)
+      - name: Apply upstream changes as squash merge
+        if: steps.state.outputs.updates == 'true'
         run: |
           set -eu
 
-          # Squash upstream reinholen (bei Konflikten geht der Befehl non-zero, wir lösen dann)
+          git checkout main
+
           git merge --squash upstream/main || true
 
-          # renovate.json: immer Fork behalten (du willst nur Actions-Updates)
+          # renovate.json: immer Fork behalten
           if git ls-files -u | awk '{print $4}' | grep -qx "renovate.json"; then
             git checkout --ours renovate.json
             git add renovate.json
           fi
 
-          # Alles andere: Upstream gewinnt
+          # Rest: Upstream gewinnt
           if git ls-files -u | grep -q .; then
             git checkout --theirs .
             git add .
           fi
 
-          # custom-override immer behalten (Fork gewinnt)
+          # Overrides behalten
           git restore --source=HEAD custom-override || true
           git add custom-override || true
 
-          # State-Datei aktualisieren (damit Changelog künftig nicht doppelt ist)
+          # State-Datei aktualisieren
           mkdir -p .github
           echo "${{ steps.state.outputs.new_upstream }}" > .github/upstream-main.sha
           git add .github/upstream-main.sha
 
-          # Wenn danach wirklich nichts geändert wurde: kein PR
+          # Keine Änderungen? => Abbruch (und PR-Step wird durch if ebenfalls übersprungen)
           if git diff --quiet; then
             echo "No file changes after squash -> nothing to PR."
             exit 0
@@ -116,6 +111,7 @@ jobs:
           git commit -m "chore: sync upstream opencloud-compose"
 
       - name: Create or update PR
+        if: steps.state.outputs.updates == 'true'
         uses: peter-evans/create-pull-request@v8
         with:
           branch: update-from-upstream
