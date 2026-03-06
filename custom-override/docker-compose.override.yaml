@@ -73,12 +73,12 @@ services:
         require() { [ -n "$$1" ] || return 1; }
 
         apk add --no-cache postgresql-client openldap-clients curl >/dev/null
-
         export LDAPTLS_REQCERT=never
 
         while true; do
           TS=$$(date +"%Y%m%d%H%M%S")
           BACKUP_FAILED=0
+          KEEP_FROM=$$(( $$BACKUP_KEEP + 1 ))
 
           if ! require "$$DB_PASSWORD" || ! require "$$LDAP_BIND_PASSWORD" || ! require "$$UPTIME_KUMA_PUSH_URL"; then
             BACKUP_FAILED=1
@@ -92,7 +92,12 @@ services:
               pg_dump -h "$$DB_HOST" -U "$$DB_USER" "$$DB_NAME" \
               | gzip > "$$PG_TMP"
             then
-              mv "$$PG_TMP" "$$PG_FINAL"
+              if [ -s "$$PG_TMP" ]; then
+                mv "$$PG_TMP" "$$PG_FINAL"
+              else
+                rm -f "$$PG_TMP"
+                BACKUP_FAILED=1
+              fi
             else
               rm -f "$$PG_TMP"
               BACKUP_FAILED=1
@@ -107,24 +112,24 @@ services:
               -b "$$LDAP_BASE_DN" -LLL "(objectClass=*)" \
               > "$$LDAP_TMP"
             then
-              mv "$$LDAP_TMP" "$$LDAP_FINAL"
+              if [ -s "$$LDAP_TMP" ]; then
+                mv "$$LDAP_TMP" "$$LDAP_FINAL"
+              else
+                rm -f "$$LDAP_TMP"
+                BACKUP_FAILED=1
+              fi
             else
               rm -f "$$LDAP_TMP"
               BACKUP_FAILED=1
             fi
 
             ls -1t /opt/data/backups/postgres/keycloak-db-*.sql.gz 2>/dev/null \
-              | tail -n +$$((BACKUP_KEEP + 1)) \
+              | tail -n +"$$KEEP_FROM" \
               | xargs -r rm -f
 
             ls -1t /opt/data/backups/ldap/ldap-*.ldif 2>/dev/null \
-              | tail -n +$$((BACKUP_KEEP + 1)) \
+              | tail -n +"$$KEEP_FROM" \
               | xargs -r rm -f
-
-            find /opt/data/backups/postgres -type f -name '*.tmp' -delete || true
-            find /opt/data/backups/ldap     -type f -name '*.tmp' -delete || true
-            find /opt/data/backups/postgres -type f -size 0 -delete || true
-            find /opt/data/backups/ldap     -type f -size 0 -delete || true
           fi
 
           if [ "$$BACKUP_FAILED" -eq 0 ]; then
