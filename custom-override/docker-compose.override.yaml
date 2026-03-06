@@ -63,67 +63,83 @@ services:
 
       UPTIME_KUMA_PUSH_URL: ${UPTIME_KUMA_PUSH_URL}
       BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-3600}
+      BACKUP_KEEP: ${BACKUP_KEEP:-3}
 
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -eu
 
-        # Pflicht-Variablen prüfen (sonst sofort "down")
-        require() { [ -n "$$1" ] || return 1; }
-        BACKUP_FAILED=0
+        require() { [ -n "$1" ] || return 1; }
 
-        if ! require "$$DB_PASSWORD" || ! require "$$LDAP_BIND_PASSWORD" || ! require "$$UPTIME_KUMA_PUSH_URL"; then
-          BACKUP_FAILED=1
-        fi
-
-        # Tools installieren
         apk add --no-cache postgresql-client openldap-clients curl >/dev/null
 
-        # LDAPS self-signed: Zertifikatsprüfung aus (internes Docker-Netz)
+        # LDAPS self-signed: Zertifikatsprüfung aus (nur internes Docker-Netz)
         export LDAPTLS_REQCERT=never
 
         while true; do
-          TS=$$(date +"%Y%m%d%H%M%S")
+          TS=$(date +"%Y%m%d%H%M%S")
           BACKUP_FAILED=0
 
-          # Passwort/URL erneut prüfen pro Loop (falls env später gefixt wird)
-          if ! require "$$DB_PASSWORD" || ! require "$$LDAP_BIND_PASSWORD" || ! require "$$UPTIME_KUMA_PUSH_URL"; then
+          if ! require "$DB_PASSWORD" || ! require "$LDAP_BIND_PASSWORD" || ! require "$UPTIME_KUMA_PUSH_URL"; then
             BACKUP_FAILED=1
           else
             mkdir -p /opt/data/backups/postgres /opt/data/backups/ldap
 
-            # Postgres dump
-            if ! PGPASSWORD="$$DB_PASSWORD" \
-              pg_dump -h "$$DB_HOST" -U "$$DB_USER" "$$DB_NAME" \
-              | gzip > "/opt/data/backups/postgres/keycloak-db-$$TS.sql.gz"
+            # ---------- Postgres dump atomar ----------
+            PG_TMP="/opt/data/backups/postgres/.keycloak-db-${TS}.sql.gz.tmp"
+            PG_FINAL="/opt/data/backups/postgres/keycloak-db-${TS}.sql.gz"
+
+            if PGPASSWORD="$DB_PASSWORD" \
+              pg_dump -h "$DB_HOST" -U "$DB_USER" "$DB_NAME" \
+              | gzip > "$PG_TMP"
             then
+              mv "$PG_TMP" "$PG_FINAL"
+            else
+              rm -f "$PG_TMP"
               BACKUP_FAILED=1
             fi
 
-            # LDAP export
-            if ! ldapsearch -x \
-              -H "ldaps://$$LDAP_HOST:$$LDAP_PORT" \
-              -D "$$LDAP_BIND_DN" -w "$$LDAP_BIND_PASSWORD" \
-              -b "$$LDAP_BASE_DN" -LLL "(objectClass=*)" \
-              > "/opt/data/backups/ldap/ldap-$$TS.ldif"
+            # ---------- LDAP export atomar ----------
+            LDAP_TMP="/opt/data/backups/ldap/.ldap-${TS}.ldif.tmp"
+            LDAP_FINAL="/opt/data/backups/ldap/ldap-${TS}.ldif"
+
+            if ldapsearch -x \
+              -H "ldaps://$LDAP_HOST:$LDAP_PORT" \
+              -D "$LDAP_BIND_DN" -w "$LDAP_BIND_PASSWORD" \
+              -b "$LDAP_BASE_DN" -LLL "(objectClass=*)" \
+              > "$LDAP_TMP"
             then
+              mv "$LDAP_TMP" "$LDAP_FINAL"
+            else
+              rm -f "$LDAP_TMP"
               BACKUP_FAILED=1
             fi
 
-            # Retention 7 Tage
-            find /opt/data/backups/postgres -type f -mtime +7 -delete || true
-            find /opt/data/backups/ldap     -type f -mtime +7 -delete || true
+            # ---------- Rotation nach Anzahl ----------
+            ls -1t /opt/data/backups/postgres/keycloak-db-*.sql.gz 2>/dev/null \
+              | tail -n +$((BACKUP_KEEP + 1)) \
+              | xargs -r rm -f
+
+            ls -1t /opt/data/backups/ldap/ldap-*.ldif 2>/dev/null \
+              | tail -n +$((BACKUP_KEEP + 1)) \
+              | xargs -r rm -f
+
+            # Zusätzliche Aufräumrunde für Altlasten / leere Dateien
+            find /opt/data/backups/postgres -type f -name '*.tmp' -delete || true
+            find /opt/data/backups/ldap     -type f -name '*.tmp' -delete || true
+            find /opt/data/backups/postgres -type f -size 0 -delete || true
+            find /opt/data/backups/ldap     -type f -size 0 -delete || true
           fi
 
           # Uptime Kuma push: ok oder down
-          if [ "$$BACKUP_FAILED" -eq 0 ]; then
-            curl -fsS --retry 3 "$$UPTIME_KUMA_PUSH_URL" >/dev/null || true
+          if [ "$BACKUP_FAILED" -eq 0 ]; then
+            curl -fsS --retry 3 "$UPTIME_KUMA_PUSH_URL" >/dev/null || true
           else
-            curl -fsS --retry 3 "$$UPTIME_KUMA_PUSH_URL?status=down" >/dev/null || true
+            curl -fsS --retry 3 "$UPTIME_KUMA_PUSH_URL?status=down" >/dev/null || true
           fi
 
-          sleep "$$BACKUP_INTERVAL_SECONDS"
+          sleep "$BACKUP_INTERVAL_SECONDS"
         done
 
 networks:
